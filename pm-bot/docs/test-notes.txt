@@ -1,0 +1,17 @@
+Tesla Chatbot Project:
+I worked on an internal LLM-based chatbot designed to assist Tesla Customer Support agents.
+The chatbot was trained on internal documentation and historical tickets to improve accuracy and reduce agent workload.
+We tracked KPIs like containment rate, latency, and response accuracy.
+I supported fine-tuning, CI/CD integration, and evaluation for the model pipeline.
+The system reduced manual escalations by 30% and prepared for future direct-to-customer deployment.
+
+Tesla AI Summarizer:
+I led the NLP pipeline to summarize inbound calls and messages.
+We used summarization and entity extraction models to classify intents such as 'Delivery Delay', 'Trade-In', and 'Payment Issues'.
+This allowed proactive issue routing and reduced advisor workload by 20%.
+
+Infineon Drone Project:
+As a project coordinator, I managed software and hardware teams to validate drone motor control firmware.
+We implemented SIL and HIL testing, fault injection, and performance dashboards using Prometheus and Grafana.
+The CI/CD pipeline used GitLab, Jenkins, and Docker to automate builds and regression tests.
+S

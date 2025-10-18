@@ -1,0 +1,3 @@
+id,question,expected_contains,allowed_sources
+1,"What KPIs should I track in a PRD for v1 launch?","activation,retention,guardrail","metrics_kpis.md;prd_template.md"
+2,"Outline PRD phases","goals,scope,success metrics","prd_template.md;pm_interview_prep.md"

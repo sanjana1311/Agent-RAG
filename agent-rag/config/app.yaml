@@ -1,0 +1,48 @@
+app:
+  name: pm-bot
+  mode: prod
+  seed: 42
+
+data:
+  chunks_dir: ./data/chunks
+  chunk_size_tokens: 400
+  chunk_overlap_tokens: 60
+  store_fields: [title, section, url, updated_at]
+
+embeddings:
+  provider: openai
+  model: text-embedding-3-small
+  cache_dir: ./.cache/emb
+
+vector_store:
+  type: faiss
+  index_path: ./.index/faiss
+  namespace: v1_default
+
+retriever:
+  top_k: 5
+  hybrid: true
+  metadata_filters: [doc_type, lang, freshness_days]
+
+generation:
+  model: gpt-4o-mini
+  max_tokens: 512
+  temperature: 0.2
+  json_output: true
+
+safety:
+  pre_filters: [pii, profanity, disallowed_topics]
+  post_filters: [toxicity, self_harm, hate]
+  groundedness_threshold: 0.9
+  refusal_policy: "If unsupported or sensitive, abstain."
+
+observability:
+  log_path: ./logs/events.jsonl
+  metrics: [rps, error_rate, p50, p95, p99, tokens_in, tokens_out, cache_hit]
+
+slo:
+  latency_p99_ms: 1200
+  error_rate_max: 0.02
+
+ab_test:
+  enabled: false
