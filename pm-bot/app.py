@@ -131,7 +131,6 @@ def build_or_load_vectorstore(
     return vs
 
 def upsert_uploaded_files(files, embedder, vs: FAISS):
-def upsert_uploaded_files(files, embedder, vs: FAISS):
     """Embed & upsert uploaded files into existing FAISS index (and save)."""
     tmp_docs = []
     for f in files:
