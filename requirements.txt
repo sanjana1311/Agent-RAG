@@ -1,16 +1,28 @@
-streamlit==1.38.0
-langchain==0.1.20
-langchain-community==0.0.38
-faiss-cpu==1.8.0
-sentence-transformers==3.0.1
-pypdf==4.2.0
-tiktoken==0.7.0
-requests==2.32.3
-python-dotenv==1.0.1
-openai==1.40.0
-
-# Bump this so it matches the new OpenAI client and does NOT pass `proxies=`
+# --- Core app dependencies ---
+streamlit>=1.38.0
+langchain>=0.1.20
+langchain-community>=0.0.38
+faiss-cpu>=1.8.0
+sentence-transformers>=3.0.1
+pypdf>=4.2.0
+tiktoken>=0.7.0
+requests>=2.32.3
+python-dotenv>=1.0.1
+openai>=1.40.0
 langchain-openai==0.1.14
+
+# --- Compatibility fixes (avoid dependency conflicts) ---
+# Let Streamlit and LangChain choose their own compatible versions
+markdown-it-py>=3.0.0
+rich>=13.7.1
+pygments>=2.18.0
+mdurl>=0.1.2
+
+# --- Optional ---
+# torch and transformers are often needed by sentence-transformers
+torch>=2.2.0
+transformers>=4.41.0
+
 
 
 
