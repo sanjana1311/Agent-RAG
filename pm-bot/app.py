@@ -10,10 +10,26 @@ import streamlit as st
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.llms import Ollama
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+# ---- LangChain 0.1.x / 0.2.x compatibility shims ----
+try:
+    # LC <= 0.1.x
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+except ModuleNotFoundError:
+    # LC >= 0.2.x
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+try:
+    # LC <= 0.1.x
+    from langchain.schema import Document
+except ModuleNotFoundError:
+    # LC >= 0.2.x
+    from langchain_core.documents import Document
+# ------------------------------------------------------
+
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationSummaryMemory
+from langchain_openai import ChatOpenAI
+
 
 
 
@@ -28,6 +44,12 @@ from langchain_community.document_loaders import (
 # Config
 # ---------------------------
 APP_TITLE = "PM Bot — Local RAG (FAISS + Ollama)"
+# Backend selection (cloud default = OpenAI; local default = Ollama if you export envs)
+MODEL_BACKEND = os.getenv("MODEL_BACKEND", "openai")  # "openai" or "ollama"
+OPENAI_MODEL  = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OLLAMA_BASE   = os.getenv("OLLAMA_BASE", "http://localhost:11434")
+
 DB_DIR = Path("./vectorstore")
 DOCS_DIR = Path("./docs")  # put your existing PM notes here
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
@@ -130,12 +152,17 @@ def ensure_local_ollama_running() -> None:
     pass
 
 def make_chain(vs: FAISS, model_name: str) -> ConversationalRetrievalChain:
-    # LLM used for both answering and summarizing the chat history
-    llm = Ollama(model=model_name, temperature=0.2, num_ctx=4096)
+    # Choose LLM based on env (cloud = openai, local = ollama)
+    if MODEL_BACKEND.lower() == "ollama":
+        llm = Ollama(model=model_name, base_url=OLLAMA_BASE, temperature=0.2, num_ctx=4096)
+    else:
+        # OpenAI via LangChain (works on Streamlit Cloud)
+        llm = ChatOpenAI(
+            model=OPENAI_MODEL,
+            temperature=0.2,
+            api_key=OPENAI_API_KEY,
+        )
 
-
-
-    # Summarized memory keeps context compact; output_key tells memory what to save
     memory = ConversationSummaryMemory(
         llm=llm,
         memory_key="chat_history",
