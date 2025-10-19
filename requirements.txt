@@ -8,7 +8,10 @@ tiktoken==0.7.0
 requests==2.32.3
 python-dotenv==1.0.1
 openai==1.40.0
-langchain-openai==0.0.8
+
+# Bump this so it matches the new OpenAI client and does NOT pass `proxies=`
+langchain-openai==0.1.14
+
 
 
 
