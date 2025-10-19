@@ -10,6 +10,7 @@ import streamlit as st
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.llms import Ollama
+
 # ---- LangChain 0.1.x / 0.2.x compatibility shims ----
 try:
     # LC <= 0.1.x
@@ -24,18 +25,22 @@ try:
 except ModuleNotFoundError:
     # LC >= 0.2.x
     from langchain_core.documents import Document
-# ------------------------------------------------------
-from langchain_openai import ChatOpenAI
 
+# --- Safe import for ChatOpenAI ---
+try:
+    from langchain_openai import ChatOpenAI
+except ModuleNotFoundError:
+    ChatOpenAI = None
+# ------------------------------------------------------
 
 
 
 # Loaders
 from langchain_community.document_loaders import (
     PyPDFLoader,
-    UnstructuredMarkdownLoader,
     TextLoader,
 )
+
 
 # ---------------------------
 # Config
@@ -78,12 +83,16 @@ def load_docs_from_folder(folder: Path) -> List[Document]:
             if p.suffix.lower() in [".pdf"]:
                 loader = PyPDFLoader(str(p))
                 docs.extend(loader.load())
+
             elif p.suffix.lower() in [".md"]:
-                loader = UnstructuredMarkdownLoader(str(p))
+                # Use TextLoader for markdown to avoid heavy 'unstructured' dependency
+                loader = TextLoader(str(p), encoding="utf-8")
                 docs.extend(loader.load())
+
             elif p.suffix.lower() in [".txt", ".mdown", ".rtf"]:
                 loader = TextLoader(str(p), encoding="utf-8")
                 docs.extend(loader.load())
+
             # add .docx support if you like:
             # elif p.suffix.lower() in [".docx"]:
             #     from langchain_community.document_loaders import Docx2txtLoader
@@ -91,7 +100,9 @@ def load_docs_from_folder(folder: Path) -> List[Document]:
             #     docs.extend(loader.load())
         except Exception as e:
             st.warning(f"Skipping {p.name}: {e}")
+
     return docs
+
 
 def split_docs(docs: List[Document]) -> List[Document]:
     splitter = RecursiveCharacterTextSplitter(
@@ -120,6 +131,7 @@ def build_or_load_vectorstore(
     return vs
 
 def upsert_uploaded_files(files, embedder, vs: FAISS):
+def upsert_uploaded_files(files, embedder, vs: FAISS):
     """Embed & upsert uploaded files into existing FAISS index (and save)."""
     tmp_docs = []
     for f in files:
@@ -131,9 +143,10 @@ def upsert_uploaded_files(files, embedder, vs: FAISS):
                 if suffix == ".pdf":
                     loader = PyPDFLoader(tmp.name)
                 elif suffix in [".md"]:
-                    loader = UnstructuredMarkdownLoader(tmp.name)
+                    loader = TextLoader(tmp.name, encoding="utf-8")
                 else:
                     loader = TextLoader(tmp.name, encoding="utf-8")
+
                 tmp_docs.extend(loader.load())
             except Exception as e:
                 st.error(f"Failed to load {f.name}: {e}")
@@ -142,6 +155,7 @@ def upsert_uploaded_files(files, embedder, vs: FAISS):
         chunks = split_docs(tmp_docs)
         vs.add_documents(chunks)
         vs.save_local(str(DB_DIR))
+
 
 def ensure_local_ollama_running() -> None:
     # Simple hint. If it fails at runtime, Streamlit will show the exception.
@@ -165,7 +179,13 @@ def build_llm(model_name: str):
     if MODEL_BACKEND.lower() == "ollama":
         return Ollama(model=model_name, base_url=OLLAMA_BASE, temperature=0.2, num_ctx=4096)
     else:
-        # langchain-openai==0.0.8 uses model_name / openai_api_key
+        if ChatOpenAI is None:
+            st.error(
+                "Missing dependency: `langchain-openai`. "
+                "Make sure `requirements.txt` at the repo root includes "
+                "`langchain-openai==0.0.8`, then Clear cache → Restart."
+            )
+            raise RuntimeError("langchain-openai not installed")
         return ChatOpenAI(
             model_name=OPENAI_MODEL,
             temperature=0.2,
