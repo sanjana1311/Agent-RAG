@@ -162,13 +162,15 @@ def render_sources(source_docs: List[Document]):
             st.write(pii_mask(d.page_content[:1000]))
 # ---------- Chain-free retrieval + answer ----------
 def build_llm(model_name: str):
-    """Return an LLM object based on env. Uses OpenAI in cloud, Ollama locally."""
     if MODEL_BACKEND.lower() == "ollama":
-        # works with both LC 0.1/0.2
         return Ollama(model=model_name, base_url=OLLAMA_BASE, temperature=0.2, num_ctx=4096)
     else:
-        # OpenAI via LC wrapper (works on Streamlit Cloud)
-        return ChatOpenAI(model=OPENAI_MODEL, temperature=0.2, api_key=OPENAI_API_KEY)
+        # langchain-openai==0.0.8 uses model_name / openai_api_key
+        return ChatOpenAI(
+            model_name=OPENAI_MODEL,
+            temperature=0.2,
+            openai_api_key=OPENAI_API_KEY,
+        )
 
 def ensure_session_state():
     if "history" not in st.session_state:
@@ -201,15 +203,26 @@ def answer_with_retrieval(vs: FAISS, llm, question: str, history, k: int = TOP_K
     )
 
     # 4) call the model (both ChatOpenAI and Ollama support .invoke on a string)
-    resp = llm.invoke(prompt)
-    text = getattr(resp, "content", resp)  # ChatOpenAI returns AIMessage; Ollama returns str
+    try:
+        resp = llm.invoke(prompt)
+        text = getattr(resp, "content", resp)  # ChatOpenAI returns AIMessage; Ollama returns  str
+    except Exception as api_err:
+        st.error("The model call failed. Check your API key, model name, or network.")
+        st.exception(api_err)
+        text = ""
+
     return str(text).strip(), docs
+
 # ---------------------------------------------------
 
 # ---------------------------
 # Streamlit App (final theme + header)
 # ---------------------------
 st.set_page_config(page_title=APP_TITLE, page_icon="🧋", layout="wide")
+
+# --- Guard: Make sure OpenAI key exists when using Cloud backend ---
+if MODEL_BACKEND.lower() == "openai" and not OPENAI_API_KEY:
+    st.error("OPENAI_API_KEY is not set. Add it in Settings → Secrets, then restart.")
 
 # ---- Global theme overrides (force full white + beige accents) ----
 st.markdown("""
@@ -353,16 +366,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# Sidebar: Model & Data Controls
+## Sidebar: Model & Data Controls
 with st.sidebar:
+    # --- Debug info (top of sidebar) ---
+    st.caption(f"Backend: **{MODEL_BACKEND}**")
+    st.caption(f"Model: **{OPENAI_MODEL if MODEL_BACKEND.lower() != 'ollama' else OLLAMA_MODEL}**")
+    st.caption("API key set: **" + ("yes" if bool(OPENAI_API_KEY) else "no") + "**")
+    st.markdown("---")
+
+    # --- Settings section ---
     st.header("Settings")
-    model_choice = st.text_input("Ollama model", value=OLLAMA_MODEL, help="e.g., phi3:mini, llama3:8b, mistral")
+    model_choice = st.text_input(
+        "Ollama model",
+        value=OLLAMA_MODEL,
+        help="e.g., phi3:mini, llama3:8b, mistral"
+    )
     st.write("**Vector DB location:**", str(DB_DIR.resolve()))
+
     # Vectorstore status badge
     try:
         _has_index = any(DB_DIR.iterdir())
     except Exception:
         _has_index = False
+
     st.markdown(
         ("<span class='badge ok'>Vectorstore ready</span>"
          if _has_index else
@@ -370,18 +396,19 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
+    # ---- Rebuild button (indented properly) ----
     if st.button("Rebuild index from ./docs"):
-    # (optional, harmless) st.session_state.pop("chain", None)
-    st.info("Rebuilding vectorstore...")
-    embedder = HuggingFaceEmbeddings(model_name=EMBED_MODEL_NAME)
-    base_docs = load_docs_from_folder(DOCS_DIR)
-    if not base_docs:
-        st.warning(f"No documents found in {DOCS_DIR}. Upload some below or add files to the folder.")
-        st.session_state["vs"] = None
-    else:
-        st.session_state["vs"] = build_or_load_vectorstore(embedder, base_docs, DB_DIR)
-    st.success("Vectorstore ready.")
+        st.info("Rebuilding vectorstore...")
+        embedder = HuggingFaceEmbeddings(model_name=EMBED_MODEL_NAME)
+        base_docs = load_docs_from_folder(DOCS_DIR)
+        if not base_docs:
+            st.warning(f"No documents found in {DOCS_DIR}. Upload some below or add files to the folder.")
+            st.session_state["vs"] = None
+        else:
+            st.session_state["vs"] = build_or_load_vectorstore(embedder, base_docs, DB_DIR)
+        st.success("Vectorstore ready.")
 
+    # ---- Upload files section ----
     st.markdown("---")
     st.subheader("Upload documents")
     uploads = st.file_uploader(
@@ -397,6 +424,8 @@ with st.sidebar:
             vs = build_or_load_vectorstore(embedder, load_docs_from_folder(DOCS_DIR), DB_DIR)
         upsert_uploaded_files(uploads, embedder, vs)
         st.success(f"Indexed {len(uploads)} file(s).")
+
+
 
 # Init vectorstore once (store in session)
 if "vs" not in st.session_state:
