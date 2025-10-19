@@ -25,9 +25,6 @@ except ModuleNotFoundError:
     # LC >= 0.2.x
     from langchain_core.documents import Document
 # ------------------------------------------------------
-
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationSummaryMemory
 from langchain_openai import ChatOpenAI
 
 
@@ -151,36 +148,6 @@ def ensure_local_ollama_running() -> None:
     # You can also check OLLAMA_HOST env var if non-default.
     pass
 
-def make_chain(vs: FAISS, model_name: str) -> ConversationalRetrievalChain:
-    # Choose LLM based on env (cloud = openai, local = ollama)
-    if MODEL_BACKEND.lower() == "ollama":
-        llm = Ollama(model=model_name, base_url=OLLAMA_BASE, temperature=0.2, num_ctx=4096)
-    else:
-        # OpenAI via LangChain (works on Streamlit Cloud)
-        llm = ChatOpenAI(
-            model=OPENAI_MODEL,
-            temperature=0.2,
-            api_key=OPENAI_API_KEY,
-        )
-
-    memory = ConversationSummaryMemory(
-        llm=llm,
-        memory_key="chat_history",
-        return_messages=True,
-        output_key="answer",
-    )
-
-    retriever = vs.as_retriever(search_kwargs={"k": TOP_K})
-
-    chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        memory=memory,
-        return_source_documents=True,
-        verbose=False,
-    )
-    return chain
-
 
 
 def render_sources(source_docs: List[Document]):
@@ -193,8 +160,51 @@ def render_sources(source_docs: List[Document]):
             source_label = meta.get("source", meta.get("file_path", ""))
             st.markdown(f"**{i}. {Path(str(source_label)).name}**")
             st.write(pii_mask(d.page_content[:1000]))
+# ---------- Chain-free retrieval + answer ----------
+def build_llm(model_name: str):
+    """Return an LLM object based on env. Uses OpenAI in cloud, Ollama locally."""
+    if MODEL_BACKEND.lower() == "ollama":
+        # works with both LC 0.1/0.2
+        return Ollama(model=model_name, base_url=OLLAMA_BASE, temperature=0.2, num_ctx=4096)
+    else:
+        # OpenAI via LC wrapper (works on Streamlit Cloud)
+        return ChatOpenAI(model=OPENAI_MODEL, temperature=0.2, api_key=OPENAI_API_KEY)
 
-# ---------------------------
+def ensure_session_state():
+    if "history" not in st.session_state:
+        st.session_state["history"] = []   # [(role, text), ...]
+
+def answer_with_retrieval(vs: FAISS, llm, question: str, history, k: int = TOP_K):
+    """Simple RAG: retrieve → build prompt with short history → call LLM. Returns (answer, source_docs)."""
+    # 1) retrieve
+    docs = vs.similarity_search(question, k=k) if vs is not None else []
+    context = "\n\n".join([d.page_content[:1200] for d in docs])
+
+    # 2) recent chat history (last 6 turns)
+    hist_txt = ""
+    for role, msg in history[-6:]:
+        who = "User" if role == "user" else "Assistant"
+        hist_txt += f"{who}: {msg}\n"
+
+    # 3) prompt
+    system = (
+        "You are PM Bot — a concise, helpful program management assistant. "
+        "Use ONLY the provided context when relevant. If context is insufficient, answer from general knowledge, "
+        "but prefer the context. Always answer in English."
+    )
+    prompt = (
+        f"{system}\n\n"
+        f"Chat History (latest first):\n{hist_txt}\n"
+        f"Context:\n{context}\n\n"
+        f"Question: {question}\n"
+        f"Answer:"
+    )
+
+    # 4) call the model (both ChatOpenAI and Ollama support .invoke on a string)
+    resp = llm.invoke(prompt)
+    text = getattr(resp, "content", resp)  # ChatOpenAI returns AIMessage; Ollama returns str
+    return str(text).strip(), docs
+# ---------------------------------------------------
 
 # ---------------------------
 # Streamlit App (final theme + header)
@@ -234,16 +244,54 @@ footer, .st-emotion-cache-1y4p8pa, .st-emotion-cache-12fmjuu, .viewerBadge_conta
   border-top: 1px solid #f0e8e0;
 }
 
-/* 3) Sidebar */
+/* 3) Sidebar (polished) */
 [data-testid="stSidebar"] {
   background: #ffffff !important;
   color: var(--text) !important;
-  border-right: 1px solid #f5f0ea;
+  border-right: 1px solid var(--border);
 }
-[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3,
-[data-testid="stSidebar"] p, [data-testid="stSidebar"] label {
+
+/* Spacing inside the sidebar */
+[data-testid="stSidebar"] .stSidebarContent {
+  padding: 20px 16px !important;
+}
+
+/* Headings + text color */
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label {
   color: var(--text) !important;
 }
+
+/* Inputs in the sidebar */
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea,
+[data-testid="stSidebar"] select {
+  border: 1px solid #ddd !important;
+  border-radius: 10px !important;
+}
+
+/* Buttons in the sidebar */
+[data-testid="stSidebar"] .stButton > button {
+  background: var(--latte) !important;
+  color: #fff !important;
+  border-radius: 12px !important;
+  border: none !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+  background: var(--latte-dark) !important;
+}
+
+/* File uploader card feel */
+[data-testid="stSidebar"] .stFileUploader {
+  background: var(--chip) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  padding: 10px !important;
+}
+
 
 /* 4) Title + tagline */
 h1 { color: var(--ink) !important; font-weight: 700 !important; }
@@ -323,15 +371,16 @@ with st.sidebar:
     )
 
     if st.button("Rebuild index from ./docs"):
-        st.session_state.pop("chain", None)
-        # rebuild vectorstore
-        st.info("Rebuilding vectorstore...")
-        embedder = HuggingFaceEmbeddings(model_name=EMBED_MODEL_NAME)
-        base_docs = load_docs_from_folder(DOCS_DIR)
-        if not base_docs:
-            st.warning(f"No documents found in {DOCS_DIR}. Upload some below or add files to the folder.")
-        vs = build_or_load_vectorstore(embedder, base_docs, DB_DIR)
-        st.success("Vectorstore ready.")
+    # (optional, harmless) st.session_state.pop("chain", None)
+    st.info("Rebuilding vectorstore...")
+    embedder = HuggingFaceEmbeddings(model_name=EMBED_MODEL_NAME)
+    base_docs = load_docs_from_folder(DOCS_DIR)
+    if not base_docs:
+        st.warning(f"No documents found in {DOCS_DIR}. Upload some below or add files to the folder.")
+        st.session_state["vs"] = None
+    else:
+        st.session_state["vs"] = build_or_load_vectorstore(embedder, base_docs, DB_DIR)
+    st.success("Vectorstore ready.")
 
     st.markdown("---")
     st.subheader("Upload documents")
@@ -349,15 +398,18 @@ with st.sidebar:
         upsert_uploaded_files(uploads, embedder, vs)
         st.success(f"Indexed {len(uploads)} file(s).")
 
-# Init vectorstore & chain once
-if "chain" not in st.session_state:
+# Init vectorstore once (store in session)
+if "vs" not in st.session_state:
     embedder = HuggingFaceEmbeddings(model_name=EMBED_MODEL_NAME)
     base_docs = load_docs_from_folder(DOCS_DIR)
     if not base_docs:
         st.warning(f"No documents found in {DOCS_DIR}. Upload some or click 'Browse files' in the sidebar.")
+        st.session_state["vs"] = None
     else:
-        vs = build_or_load_vectorstore(embedder, base_docs, DB_DIR)
-        st.session_state["chain"] = make_chain(vs, model_choice)
+        st.session_state["vs"] = build_or_load_vectorstore(embedder, base_docs, DB_DIR)
+
+ensure_session_state()
+
 
 
 # Chat UI
@@ -371,23 +423,23 @@ with st.expander("Try these"):
 
 if ask and user_q.strip():
     try:
-        chain = st.session_state["chain"]
-        result: Dict[str, Any] = chain({"question": user_q.strip() + "\n\nPlease answer in English."})
-        answer = pii_mask(result.get("answer", "")).strip()
-        source_docs = result.get("source_documents", [])
+        vs = st.session_state.get("vs", None)
+        llm = build_llm(model_choice)
+        answer, source_docs = answer_with_retrieval(vs, llm, user_q.strip() + "\n\nPlease answer in English.", st.session_state["history"])
 
-        # ───────────────── Conversation Memory ─────────────────
-        if "chain" in st.session_state and hasattr(st.session_state["chain"], "memory"):
-            hist = st.session_state["chain"].memory.chat_memory.messages
-            if hist:
-                with st.expander("💬 Conversation Memory (last few turns)"):
-                    for m in hist[-6:]:
-                        who = "🧍‍♀️ You" if getattr(m, "type", "") == "human" else "🤖 PM Bot"
-                        st.markdown(f"**{who}:** {m.content}")
+        # update history
+        st.session_state["history"].append(("user", user_q))
+        st.session_state["history"].append(("assistant", answer))
 
-        # ───────────── Chat bubble + Answer card (outside expander) ─────────────
+        # show memory (last few turns)
+        if st.session_state["history"]:
+            with st.expander("💬 Conversation Memory (last few turns)"):
+                for role, msg in st.session_state["history"][-6:]:
+                    who = "🧍‍♀️ You" if role == "user" else "🤖 PM Bot"
+                    st.markdown(f"**{who}:** {pii_mask(msg)}")
+
+        # bubbles + answer
         st.markdown(f"<div class='msg human'><b>You:</b> {pii_mask(user_q)}</div>", unsafe_allow_html=True)
-
         st.markdown("<div class='answer-card'><h3>Answer</h3>", unsafe_allow_html=True)
         st.markdown(pii_mask(answer).replace("\n","<br>"), unsafe_allow_html=True)
 
@@ -395,22 +447,18 @@ if ask and user_q.strip():
             chips = []
             for d in source_docs:
                 meta = d.metadata or {}
-                label = Path(str(meta.get("source", meta.get("file_path", "")))).name
+                label = Path(str(meta.get('source', meta.get('file_path', '')))).name
                 chips.append(f"<span class='src-chip'>{label}</span>")
             st.markdown("<div style='margin-top:10px;'>" + "".join(chips) + "</div>", unsafe_allow_html=True)
         else:
             st.markdown("<div style='opacity:0.7;font-size:13px;'>No sources retrieved.</div>", unsafe_allow_html=True)
 
-        st.markdown("</div>", unsafe_allow_html=True)  # close answer-card
+        st.markdown("</div>", unsafe_allow_html=True)
 
     except Exception as e:
-        st.error(
-            "There was an error generating an answer. "
-            "Confirm Ollama is running and the model is pulled (e.g., `ollama pull phi3:mini`)."
-        )
+        st.error("There was an error generating an answer.")
         st.exception(e)
 
-st.markdown("---")
 
 st.caption(
     "Tips: put your PM notes in `./docs`, click **Rebuild index**, and try: "
